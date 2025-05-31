@@ -2,60 +2,45 @@
 import asyncio
 import json
 import logging
-import time
 import math
 import pygame
 import textwrap
-from SimConnect import SimConnect, AircraftRequests
 import websockets
 import numpy as np
+import os
+import re
 from bs4 import BeautifulSoup
-import os  # Для работы с файловой системой
 
-# —————————————————————————————————————————————
-#  Настройки
-# —————————————————————————————————————————————
-LOG_FILE        = "gns530_winwing_cdu.log"
-WS_URI          = "ws://localhost:8320/winwing/cdu-captain"
-UPDATE_INTERVAL = 0   # секунды между обновлениями
-JOYSTICK_INDEX  = 0     # индекс джойстика
-BUTTON_NEXT     = 28    # кнопка: следующая страница
-BUTTON_PREV     = 30    # кнопка: предыдущая страница
-BUTTON_UP = 31
-BUTTON_DOWN = 29
-BUTTONS_SELECT   = [0,1,2,3,4,5]    # кнопка: выбрать файл (новая кнопка для выбора файла)
-DIR = r"""C:\Users\sasch\AppData\Local\MobiFlight\MobiFlight Connector\Scripts\Winwing\GNS530"""
-global files  # Глобальная переменная для хранения списка файлов
-global selected_file  # Глобальная переменная для хранения выбранного файла
-global FILE_SELECTED  # Глобальная переменная для хранения флага файла
-global flightplan  # Глобальная переменная для хранения плана полета
-flightplan = None  # Переменная для хранения плана полета
-FILE_SELECTED = False
-selected_file = None  # Переменная для хранения выбранного файла
-files = [f for f in os.listdir(DIR) if f.split(".")[-1] in ["html", "htm"]]
-# —————————————————————————————————————————————
+# --- SimConnect ---
+from SimConnect import SimConnect, AircraftRequests
 
-# Цвет текста для MobiFlight
-COLORS = {"white": "w", "cyan": "c", "green": "g"}
-ERROR_SCREEN_ACTIVE = False
-ERROR_TYPE = "error"  # Тип ошибки (error/warn/success)
-# Сообщение об ошибке
-ERROR_MESSAGE = "SOME ERROR OCCURRED"
+LOG_FILE = "gns530_winwing_cdu.log"
+WS_URI = "ws://localhost:8320/winwing/cdu-captain"
+UPDATE_INTERVAL = 0.1
+JOYSTICK_INDEX = 1
 
-# СимVars для GNS530
+BUTTONS_LSK = [0, 1, 2, 3, 4, 5]
+BUTTONS_RSK = [6, 7, 8, 9, 10, 11]
+BUTTONS_DIGITS = {32 + i: str(i + 1) for i in range(9)}
+BUTTONS_DIGITS[42] = '0'
+BUTTON_DOT = 41
+BUTTON_BKSP = 73
+BUTTON_CLR = 74  # CLR now is 74!
+BUTTON_LEFT = 29
+BUTTON_UP = 30
+BUTTON_RIGHT = 31
+BUTTON_DOWN = 32
+BUTTONS_LETTERS = {44 + i: chr(65 + i) for i in range(26)}
+DISPLAY_LINE_LENGTH = 24
+DISPLAY_LINES = 14
+FILES_DIR = r"C:\Users\sasch\AppData\Local\MobiFlight\MobiFlight Connector\Scripts\Winwing\GNS530"
+
 SIMVARS = [
     "COM_ACTIVE_FREQUENCY:1", "COM_STANDBY_FREQUENCY:1",
-    "COM_ACTIVE_FREQUENCY:2", "COM_STANDBY_FREQUENCY:2",
     "NAV_ACTIVE_FREQUENCY:1", "NAV_STANDBY_FREQUENCY:1",
-    "NAV_ACTIVE_FREQUENCY:2", "NAV_STANDBY_FREQUENCY:2",
-    "GPS_GROUND_SPEED", "GPS_ETE", "GPS_ETA",
-    "GPS_FLIGHT_PLAN_WP_COUNT", "GPS_FLIGHT_PLAN_WP_INDEX",
-    "GPS_WP_NEXT_ID", "GPS_GROUND_MAGNETIC_TRACK",
+    "TRANSPONDER CODE:1",
+    "GPS_GROUND_SPEED", "GPS_GROUND_MAGNETIC_TRACK"
 ]
-
-# Текущая страница
-current_page = 0
-selected_file = None  # Храним выбранный файл
 
 def setup_logging():
     logging.basicConfig(
@@ -66,93 +51,25 @@ def setup_logging():
     console = logging.StreamHandler()
     console.setFormatter(logging.Formatter("%(asctime)s [%(levelname)s] %(message)s"))
     logging.getLogger().addHandler(console)
-def parse_file(filename):
-    file = open(os.path.join(DIR, filename), 'r', encoding="utf8")
-    html = file.read()
-    soup = BeautifulSoup(html, 'html.parser')
-
-    rows = soup.find_all('tr')
-
-    fpln = []
-    # Пример использования:
-    
-    for row in rows[1:]:
-        cells = row.find_all('td')
-        ident = cells[1].text.strip()
-        hdg = int(cells[9].text.strip()) if cells[9].text.strip() != '' else ''
-        distance_nm =  '' if cells[10].text.strip() == '' else float(cells[10].text.strip().replace(',', '.'))
-        fpln.append({"ident": ident, "hdg": hdg, "distance_nm": distance_nm})
-    return fpln
-
-class GNS530Bridge:
-    def __init__(self):
-        self.sm = SimConnect()
-        self.aq = AircraftRequests(self.sm, _time=2000)
-        for v in SIMVARS:
-            try: self.aq.find(v)
-            except: pass
-
-    def read_all(self):
-        data = {}
-        for v in SIMVARS:
-            try: data[v] = self.aq.get(v)
-            except: data[v] = None
-        return data
-
-    def get_flightplan(self):
-        wps = []
-        count = int(self.aq.get("GPS_FLIGHT_PLAN_WP_COUNT") or 0)
-        current = int(self.aq.get("GPS_FLIGHT_PLAN_WP_INDEX") or 0)
-        for idx in range(count):
-            try:
-                self.aq.set("GPS_FLIGHT_PLAN_WP_INDEX", idx)
-                time.sleep(0.05)
-                wp = self.aq.get("GPS_WP_NEXT_ID") or ""
-            except:
-                wp = ""
-            wps.append(str(wp))
-        try:
-            self.aq.set("GPS_FLIGHT_PLAN_WP_INDEX", current)
-        except: pass
-        return wps
-
-
-def safe_fmt(val, fmt="{:06.2f}", default="----.--"):
-    try: return fmt.format(val)
-    except: return default
-
-def safe_time(sec, default="--:--"):
-    try:
-        m = int(sec)//60; s = int(sec)%60
-        return f"{m:02}:{s:02}"
-    except: return default
-
-
-
 
 def parse_colored_text(text, default_color="w"):
-    СOLOR_MARKER_SEPARATOR = "`"  # Символ-разделитель между цветом и текстом
-    TARGET_LINE_LENGTH = 24       # Желаемая длина строки без цветовых кодов
-    # Сначала считаем длину строки без цветовых кодов
+    COLOR_MARKER_SEPARATOR = "`"
+    TARGET_LINE_LENGTH = DISPLAY_LINE_LENGTH
     raw_text = ""
     i = 0
     while i < len(text):
-        if i + 1 < len(text) and text[i+1] == СOLOR_MARKER_SEPARATOR:
-            i += 2  # Пропускаем код цвета и разделитель
+        if i + 1 < len(text) and text[i + 1] == COLOR_MARKER_SEPARATOR:
+            i += 2
             continue
         raw_text += text[i]
         i += 1
-
-    # Если длина строки без цветов меньше 24, добавляем пробелы в конец
     if len(raw_text) < TARGET_LINE_LENGTH:
         text += ' ' * (TARGET_LINE_LENGTH - len(raw_text))
-
-    # Теперь парсим текст обратно с цветами
     colored = []
     current_color = default_color
     i = 0
     while i < len(text):
-        if i + 1 < len(text) and text[i+1] == СOLOR_MARKER_SEPARATOR:
+        if i + 1 < len(text) and text[i + 1] == COLOR_MARKER_SEPARATOR:
             current_color = text[i].lower()
             i += 2
             continue
@@ -161,212 +78,354 @@ def parse_colored_text(text, default_color="w"):
         i += 1
     return colored
 
+def safe_str(s):
+    return s if isinstance(s, str) else str(s or "")
 
-def format_display_line(ident: str, hdg: str, dista1: str, dista2: str) -> str:
-    # Приводим каждую часть к нужной длине
-    ident = ident.ljust(5)[:5]      # IDENT — дополняем пробелами справа до 5 символов
-    hdg = hdg.zfill(3)[-3:]          # HDG — дополняем нулями слева до 3 символов
-    dista1 = dista1.split(".")[0].rjust(4)[:4]     # DISTA1 — дополняем пробелами слева до 5 символов
-    dista2 = dista2.split(".")[0].rjust(4)[:4]     # DISTA2 — дополняем пробелами слева до 5 символов
+def bcd16_to_int(bcd):
+    result = 0
+    multiplier = 1
+    bcd = int(bcd)
+    while bcd > 0:
+        digit = bcd & 0xF
+        result += digit * multiplier
+        multiplier *= 10
+        bcd >>= 4
+    return result
 
-    # Форматируем HDG, добавляя символ градуса
-    hdg = f"{hdg}°"  # Например, 180 -> 180°
+def int_to_bcd16(val):
+    out = 0
+    shift = 0
+    val = int(val)
+    while val > 0 and shift < 16:
+        out |= (val % 10) << shift
+        val //= 10
+        shift += 4
+    return out
 
-    # Форматируем дистанции, добавляя "NM"
-    dista1 = f"{dista1}NM" if dista1.strip() else dista1
-    dista2 = f"{dista2}NM" if dista2.strip() else dista2
+def safe_freq(val):
+    try:
+        return "{:06.3f}".format(float(val))
+    except Exception:
+        return "---.---"
 
-    parts = [ident, hdg, dista1, dista2]
-    print(parts)
-    total_content_length = sum(len(part) for part in parts)
-    total_spaces = 24 - total_content_length
+# --- SimConnect Bridge ---
+class GNS530Bridge:
+    def __init__(self):
+        self.sm = SimConnect()
+        self.aq = AircraftRequests(self.sm, _time=2000)
+        for v in SIMVARS:
+            try:
+                self.aq.find(v)
+            except Exception:
+                pass
+    def read_all(self):
+        data = {}
+        for v in SIMVARS:
+            try:
+                data[v] = self.aq.get(v)
+            except Exception as e:
+                logging.error(f"Ошибка чтения симвара {v}: {e}")
+                data[v] = None
+        return data
+    def set_simvar(self, var, value):
+        try:
+            self.aq.set(var, value)
+            return True
+        except Exception as e:
+            logging.error(f"Ошибка установки симвара {var}: {e}")
+            return False
 
-    # Распределяем пробелы между словами, оставляя минимум 1 пробел между частями
-    if total_spaces >= 3:
-        space_between = total_spaces // 3
-        extra = total_spaces % 3
+# --- Error State Management ---
+class ErrorManager:
+    def __init__(self):
+        self.active = False
+        self.message = ""
+    def set(self, msg):
+        self.active = True
+        self.message = msg
+        logging.info(f"Error set: {msg}")
+    def clear(self):
+        self.active = False
+        self.message = ""
+        logging.info("Error cleared")
+    def is_active(self):
+        return self.active
 
-        spaces = [' ' * (space_between + (1 if i < extra else 0)) for i in range(3)]
-        # Соединяем части с пробелами
-        line = parts[0] + spaces[0] + parts[1] + spaces[1] + parts[2] + spaces[2] + parts[3]
-    else:
-        # если очень мало пробелов — просто склеиваем
-        line = ''.join(parts).ljust(24)
+# --- Flightplan file parser ---
+def list_fpl_files():
+    try:
+        files = [f for f in os.listdir(FILES_DIR) if f.lower().endswith('.html')]
+        files.sort()
+        return files
+    except Exception as e:
+        logging.error(f"Ошибка чтения директории файлов: {e}")
+        return []
 
-    # Возвращаем строку длиной 24 символа
-    return line[:24]
+def parse_fpl_file(filepath):
+    try:
+        with open(filepath, "r", encoding="utf-8") as f:
+            soup = BeautifulSoup(f, "html.parser")
+        dep, arr = None, None
+        h1 = soup.find("h1")
+        if h1:
+            m = re.match(r".*\((\w{4})\)\s*to\s*.*\((\w{4})\)", h1.text)
+            if m:
+                dep, arr = m.group(1), m.group(2)
+        if not (dep and arr):
+            title = soup.find("title")
+            if title:
+                m = re.match(r".*\((\w{4})\).*to.*\((\w{4})\)", title.text)
+                if m:
+                    dep, arr = m.group(1), m.group(2)
+        table = soup.find("table")
+        if not table:
+            raise ValueError("No table in file")
+        headers = [th.get_text(strip=True) for th in table.find_all("th")]
+        idx_ident = idx_course = idx_legtime = idx_wind = None
+        for i, h in enumerate(headers):
+            if "Ident" in h: idx_ident = i
+            if "Course" in h: idx_course = i
+            if "Leg Time" in h: idx_legtime = i
+            if "Head- or Tailwind" in h: idx_wind = i
+        if None in (idx_ident, idx_course, idx_legtime, idx_wind):
+            raise ValueError("Table columns not found")
+        points = []
+        for tr in table.find_all("tr")[1:]:
+            tds = tr.find_all("td")
+            if len(tds) <= max(idx_ident, idx_course, idx_legtime, idx_wind):
+                continue
+            ident = safe_str(tds[idx_ident].get_text(strip=True))
+            course = safe_str(tds[idx_course].get_text(strip=True)).replace(',', '.')
+            legtime = safe_str(tds[idx_legtime].get_text(strip=True))
+            wind = safe_str(tds[idx_wind].get_text(strip=True))
+            if ident:
+                if not course or not course.replace('.', '', 1).isdigit():
+                    course = "---"
+                if not legtime:
+                    legtime = "--:--"
+                points.append({
+                    "ident": ident[:8],
+                    "course": course,
+                    "legtime": legtime,
+                    "wind": wind
+                })
+        if not points or not dep or not arr:
+            raise ValueError("Not enough data in file")
+        return {"dep": dep, "arr": arr, "points": points}
+    except Exception as e:
+        logging.error(f"Ошибка разбора плана {filepath}: {e}")
+        return None
 
+# --- App State ---
+class AppState:
+    def __init__(self):
+        self.scratchpad = ""
+        self.page_idx = 0     # 0: main, 1: FPLN
+        self.bridge = None
+        self.last_data = {}
+        self.fpl_file = None
+        self.fpl = None
+        self.fpl_file_list = []
+        self.fpl_file_scroll = 0
+        self.fpl_file_selected = 0
+        self.fpl_scroll = 0
+        self.error = ErrorManager()
 
-def build_error_screen():
-    global ERROR_MESSAGE
-    global ERROR_TYPE
-    error_description = ERROR_MESSAGE  # Сообщение об ошибке
-    type = ERROR_TYPE  # Тип ошибки (error/warn/success)
-    lines = [" " * 24 for _ in range(14)]  # Инициализация пустого экрана
-    color = "R" if type == 'error' else "A" if type == 'warn' else "C"  # Цвет текста (красный для ошибки, зеленый для успеха)
-    # Заголовок
-    title = "R`ERROR OCCURRED"
-    lines[0] = title.center(24)  # Центрируем заголовок по ширине экрана
+    def clear_scratchpad(self):
+        self.scratchpad = ""
+    def backspace_scratchpad(self):
+        self.scratchpad = self.scratchpad[:-1]
+    def append_scratchpad(self, ch):
+        if self.scratchpad is None:
+            self.scratchpad = ""
+        if len(self.scratchpad) < 20:
+            self.scratchpad += ch
+    def set_error(self, msg):
+        self.error.set(msg)
+    def clear_error(self):
+        self.error.clear()
+        self.unload_fpl()
+    def unload_fpl(self):
+        self.fpl = None
+        self.fpl_file = None
+        self.fpl_scroll = 0
+        self.fpl_file_selected = 0
+        self.fpl_file_scroll = 0
 
-    # Ошибка
-    error_description = "SOME ERROR OCCURRED"  # Описание ошибки
-    i = 3
-    for line in textwrap.wrap(error_description, 24, break_long_words=True):
-        lines[i] = f"C`{line.ljust(24)[:24]}".center(24)  # Описание ошибки
-        i += 1 
-    lines[13] = "G`CLR TO CLOSE".center(24)  # Пустая строка внизу
-    # Дополнительная информация
-    # lines[2] = " " * 24  # Пустая строка после описания
-    # lines[3] = " " * 24  # Еще одна пустая строка для красоты
+# --- Main page ---
+class MainPage:
+    def __init__(self, state: AppState):
+        self.state = state
+    def render(self, data):
+        lines = [" " * DISPLAY_LINE_LENGTH for _ in range(DISPLAY_LINES)]
+        lines[0] = "C`GNS530 CDU".center(DISPLAY_LINE_LENGTH)
+        com1a = safe_freq(data.get('COM_ACTIVE_FREQUENCY:1'))
+        com1s = safe_freq(data.get('COM_STANDBY_FREQUENCY:1'))
+        nav1a = safe_freq(data.get('NAV_ACTIVE_FREQUENCY:1'))
+        nav1s = safe_freq(data.get('NAV_STANDBY_FREQUENCY:1'))
+        try:
+            xpdr_raw = data.get('TRANSPONDER CODE:1', 0)
+            xpdr = bcd16_to_int(int(xpdr_raw))
+            xpdr = "{:04d}".format(xpdr)
+        except Exception:
+            xpdr = "0000"
+        try:
+            gs = str(int(float(data.get("GPS_GROUND_SPEED", 0))*1.94384)).rjust(3)
+        except Exception:
+            gs = "---"
+        try:
+            trk = str(int(np.degrees(float(data.get("GPS_GROUND_MAGNETIC_TRACK") or 0)))).rjust(3)
+        except Exception:
+            trk = "---"
+        lines[2] = f"C`COM1 G`{com1a} C`/ A`{com1s}"
+        lines[4] = f"C`NAV1 G`{nav1a} C`/ A`{nav1s}"
+        lines[6] = f"C`XPDR G`{xpdr}"
+        lines[8] = f"C`GS G`{gs}KT C`TRK G`{trk}"
+        if self.state.fpl:
+            lines[12] = " " * (DISPLAY_LINE_LENGTH-12) + "C`< DEL FPLN"
+        pad = self.state.scratchpad
+        pad_disp = f"A`[ W`{pad.ljust(DISPLAY_LINE_LENGTH-4)[:DISPLAY_LINE_LENGTH-4]} A`]".ljust(DISPLAY_LINE_LENGTH)
+        lines[-1] = pad_disp
+        return lines
+    def handle_button(self, button):
+        state = self.state
+        if button == BUTTON_CLR:
+            state.clear_scratchpad()
+            return
+        if button == BUTTON_BKSP:
+            state.backspace_scratchpad()
+            return
+        # Удалить план (RSK12)
+        if button == 11 and state.fpl:
+            state.unload_fpl()
+        # Записать XPDR — RSK6 (кнопка 11, строка XPDR)
+        if button == 7:  # RSK6 на строке XPDR — можно выбрать другую кнопку
+            pad = state.scratchpad.strip()
+            if pad.isdigit() and 0 <= int(pad) <= 7777:
+                value = int(pad)
+                bcd_val = int_to_bcd16(value)
+                ok = state.bridge.set_simvar("TRANSPONDER CODE:1", bcd_val)
+                if ok:
+                    state.clear_scratchpad()
+                else:
+                    state.set_error("XPDR WRITE ERR")
+            else:
+                state.set_error("XPDR CODE ERR")
+    def handle_key(self, button):
+        state = self.state
+        if button in BUTTONS_DIGITS:
+            state.append_scratchpad(BUTTONS_DIGITS[button])
+        elif button == BUTTON_DOT:
+            if '.' not in state.scratchpad and len(state.scratchpad) < 7:
+                state.append_scratchpad('.')
+        elif button in BUTTONS_LETTERS:
+            state.append_scratchpad(BUTTONS_LETTERS[button])
+        elif button == BUTTON_BKSP:
+            state.backspace_scratchpad()
+        elif button == BUTTON_CLR:
+            state.clear_scratchpad()
 
-    return lines
+# --- FPLN page ---
+class FPLNPage:
+    def __init__(self, state: AppState):
+        self.state = state
+    def render(self, data):
+        lines = [" " * DISPLAY_LINE_LENGTH for _ in range(DISPLAY_LINES)]
+        if self.state.fpl:
+            dep = self.state.fpl.get("dep", "---")
+            arr = self.state.fpl.get("arr", "---")
+            lines[0] = f"C`FLIGHTPLAN {dep} \u2192 {arr}".center(DISPLAY_LINE_LENGTH)
+            pts = self.state.fpl.get("points", [])
+            start = self.state.fpl_scroll
+            for i in range(6):
+                idx = start + i
+                lidx = 2 + i*2
+                if idx < len(pts):
+                    pt = pts[idx]
+                    ident = pt["ident"][:8].ljust(8)
+                    course = pt["course"].rjust(3)
+                    legtime = pt["legtime"].rjust(5)
+                    wind = pt["wind"].rjust(4)
+                    lines[lidx] = f"W`{ident} G`{course} W`{legtime} W`{wind}".ljust(DISPLAY_LINE_LENGTH)
+                else:
+                    lines[lidx] = ""
+        else:
+            lines[0] = "C`FLIGHTPLANS".center(DISPLAY_LINE_LENGTH)
+            files = self.state.fpl_file_list = list_fpl_files()
+            if not files:
+                lines[6] = "R`NO FLIGHTPLANS FOUND".center(DISPLAY_LINE_LENGTH)
+            else:
+                start = self.state.fpl_file_scroll
+                sel = self.state.fpl_file_selected
+                for i in range(6):
+                    idx = start + i
+                    lidx = 2 + i*2
+                    if idx < len(files):
+                        name = files[idx][:20]
+                        marker = ">" if idx == sel else " "
+                        lines[lidx] = f"W`{marker} {name}".ljust(DISPLAY_LINE_LENGTH)
+                    else:
+                        lines[lidx] = ""
+        return lines
+    def handle_button(self, button):
+        state = self.state
+        if state.fpl:
+            pts = state.fpl.get("points", [])
+            if button == BUTTON_UP:
+                state.fpl_scroll = max(0, state.fpl_scroll - 1)
+            elif button == BUTTON_DOWN:
+                state.fpl_scroll = min(max(0, len(pts) - 6), state.fpl_scroll + 1)
+        else:
+            files = state.fpl_file_list = list_fpl_files()
+            start = state.fpl_file_scroll
+            sel = state.fpl_file_selected
+            maxsel = len(files)-1
+            for i, lsk in enumerate(BUTTONS_LSK):
+                idx = start + i
+                if button == lsk and idx < len(files):
+                    filepath = os.path.join(FILES_DIR, files[idx])
+                    fpl = parse_fpl_file(filepath)
+                    if not fpl:
+                        state.set_error("NOT ALLOWED")
+                        state.unload_fpl()
+                    else:
+                        state.fpl = fpl
+                        state.fpl_file = files[idx]
+                        state.fpl_scroll = 0
+                    return
+            if button == BUTTON_UP and sel > 0:
+                state.fpl_file_selected -= 1
+                if state.fpl_file_selected < state.fpl_file_scroll:
+                    state.fpl_file_scroll = state.fpl_file_selected
+            elif button == BUTTON_DOWN and sel < maxsel:
+                state.fpl_file_selected += 1
+                if state.fpl_file_selected >= state.fpl_file_scroll + 6:
+                    state.fpl_file_scroll = state.fpl_file_selected - 5
+    def handle_key(self, button):
+        pass
 
+# --- Error page ---
+class ErrorPage:
+    def __init__(self, state: AppState):
+        self.state = state
 
+    def render(self, data):
+        msg = self.state.error.message or "ERROR"
+        lines = [f"R`{msg}".center(DISPLAY_LINE_LENGTH)]
+        lines += [" " * DISPLAY_LINE_LENGTH for _ in range(DISPLAY_LINES-1)]
+        lines[-1] = "[PRESS CLR]".center(DISPLAY_LINE_LENGTH)
+        return lines
 
-def build_normal_display(data, wps):
-    if ERROR_SCREEN_ACTIVE:
-        return build_error_screen()  # Показываем экран ошибки
+    def handle_button(self, button):
+        if button == BUTTON_CLR:
+            self.state.clear_error()
 
-    lines = []
-    gs = round(float(data.get("GPS_GROUND_SPEED") or 0) * 1.94384)
-    track = data.get("GPS_GROUND_MAGNETIC_TRACK") or 0
-    trk = int(np.degrees(float(track))) if track else 0
+    def handle_key(self, button):
+        if button == BUTTON_CLR:
+            self.state.clear_error()
 
-    # Строки с цветовой разметкой
-    lines.append(" " * 24)
-    lines.append(f"W`COM1 G`{safe_fmt(data['COM_ACTIVE_FREQUENCY:1'])} W`| GS: B`{gs:03d}KT")
-    lines.append(f"С`STBY G`{safe_fmt(data['COM_STANDBY_FREQUENCY:1'])} W`| TRK: B`{trk}°")
-    lines.append(" " * 24)
-    lines.append(f"W`NAV1 G`{safe_fmt(data['NAV_ACTIVE_FREQUENCY:1'])}"+"      CLR  ")
-    lines.append(f"С`STBY G`{safe_fmt(data['NAV_STANDBY_FREQUENCY:1'])}"+"     FPLN ")
-    lines.append("-" * 24)
-    lines.append(f"W`ETE G`{safe_time(data.get('GPS_ETE'))} W`ETA G`{safe_time(data.get('GPS_ETA'))}")
-
-    for i in range(0, len(wps), 4):
-        chunk = wps[i:i+4]
-        line = ",".join(chunk)[:24]
-        lines.append(line)
-
-    while len(lines) < 14:
-        lines.append(" " * 24)
-
-    # Теперь красим
-    return lines
-
-# Глобальные переменные
-# files = []
-# flightplan = []
-# selected_file = None
-# FILE_SELECTED = False
-flightplan_scroll_index = 0  # Индекс для скроллинга
-
-def build_file_list_display(data, wps):
-    if ERROR_SCREEN_ACTIVE:
-        return build_error_screen()  # Показываем экран ошибки
-
-    lines = [" " * 24 for _ in range(14)]
-
-    if not FILE_SELECTED:
-        draw_file_selection(lines)
-    else:
-        draw_flightplan(lines)
-    
-    return lines
-
-def draw_file_selection(lines):
-    lines[0] = 'A`   SELECT FLIGHTPLAN    '
-    
-    limited_files = files[:6]  # Ограничиваем 6 файлами
-    file_positions = {0: 2, 1: 4, 2: 6, 3: 8, 4: 10, 5: 12}
-
-    for idx, file in enumerate(limited_files):
-        line_idx = file_positions.get(idx)
-        if line_idx is not None:
-            lines[line_idx] = file.ljust(24)[:24]
-
-def draw_flightplan(lines):
-    global flightplan_scroll_index
-
-    if not flightplan:
-        lines[0] = 'C`FLIGHTPLAN EMPTY         '
-        return
-
-    start_point = flightplan[0].split(" ")[0]
-    end_point = flightplan[-1].split(" ")[0]
-    lines[0] = f"C`FLIGHTPLAN  {start_point} - {end_point}".ljust(24)[:24]
-
-    # Берем только нужную порцию для отображения, с шагом по 3 строки
-    plan_slice = flightplan[flightplan_scroll_index:flightplan_scroll_index + 6]  # Слайс для 6 строк
-
-    display_positions = [2, 4, 6, 8, 10, 12]  # Индексы для отображения
-
-    for i, point in enumerate(plan_slice):
-        lines[display_positions[i]] = point.ljust(24)[:24]
-
-def scroll_flightplan(direction: int):
-    """
-    Скроллинг flightplan вверх/вниз.
-    direction: 1 - вниз, -1 - вверх
-    """
-    global flightplan_scroll_index
-
-    max_scroll = max(0, len(flightplan) - 6)
-    flightplan_scroll_index = max(0, min(flightplan_scroll_index + direction * 3, max_scroll))
-
-def load_flightplan(fpn):
-    global flightplan
-    flightplan = []
-    for i in fpn:
-        fp_str = format_display_line(i["ident"], str(i["hdg"]), str(i["distance_nm"]), "0.0")
-        flightplan.append(fp_str)
-    return flightplan
-def build_empty_display():
-    return [[] for _ in range(14*24)]
-
-# Массив страниц (можно добавлять сюда дальше)
-pages = [
-    build_normal_display,  # Страница 0: нормальный экран
-    build_file_list_display,  # Страница 1: список файлов
-]
-
-def next_page():
-    global current_page
-    current_page = (current_page + 1) % len(pages)
-    logging.info(f"Переключение на страницу {current_page}")
-
-def prev_page():
-    global current_page
-    current_page = (current_page - 1) % len(pages)
-    logging.info(f"Переключение на страницу {current_page}")
-def clear_flightplan():
-    global flightplan
-    global FILE_SELECTED
-    FILE_SELECTED = False
-    flightplan = []
-    logging.info("План полета сброшен")
-def select_file(file_name):
-    global selected_file
-    global flightplan
-    global FILE_SELECTED
-    global ERROR_MESSAGE
-    global ERROR_TYPE
-    if file_name in os.listdir(DIR):
-        selected_file = file_name
-        parsed = parse_file(file_name)
-        if parsed == []:
-            logging.error(f"Ошибка: файл {file_name} пуст")
-            global ERROR_SCREEN_ACTIVE
-            ERROR_SCREEN_ACTIVE = True
-            ERROR_MESSAGE = f"File {file_name} is empty"
-            ERROR_TYPE = "warn"
-            return None
-        flightplan = load_flightplan(parsed)
-        logging.info(f"Файл {file_name} выбран")
-        FILE_SELECTED = True
-        global current_page
-        current_page = 0  # Возвращаемся на страницу с нормальным экраном
-
-async def joystick_listener():
+# --- Joystick/page logic ---
+async def joystick_listener(state: AppState, pages):
     pygame.init()
     pygame.joystick.init()
     try:
@@ -376,59 +435,56 @@ async def joystick_listener():
     except Exception as e:
         logging.error(f"Ошибка инициализации джойстика: {e}")
         return
-
     while True:
         pygame.event.pump()
         for event in pygame.event.get():
             if event.type == pygame.JOYBUTTONDOWN:
-                if event.button == BUTTON_NEXT:
-                    next_page()
-                elif event.button == BUTTON_PREV:
-                    prev_page()
-                elif event.button == BUTTON_UP:
-                    scroll_flightplan(-1)  # Прокрутить вверх
-                elif event.button == BUTTON_DOWN:
-                    scroll_flightplan(1)  # Прокрутить низ
-                elif event.button == 7:  # Кнопка 7 сбрасывает план полета
-                    clear_flightplan()
-                elif event.button == 73:  # Кнопка для закрытия экрана ошибки
-                    global ERROR_SCREEN_ACTIVE
-                    ERROR_SCREEN_ACTIVE = False  # Закрыть экран ошибки
-                    logging.info("Ошибка закрыта")
-                elif event.button in BUTTONS_SELECT and current_page == 1:  # Выбор файла на странице с файлами
-                    print(f"Выбрана кнопка {event.button}")
-                    try:
-                        selected_file = files[event.button]
-                        select_file(selected_file)
-                    except IndexError:
-                        logging.error(f"Ошибка: индекс {event.button} вне диапазона файлов")
-        await asyncio.sleep(0.05)
+                # Error page always has priority
+                if state.error.is_active():
+                    ep = ErrorPage(state)
+                    if (event.button in BUTTONS_DIGITS or event.button == BUTTON_DOT
+                            or event.button in BUTTONS_LETTERS or event.button == BUTTON_BKSP
+                            or event.button == BUTTON_CLR):
+                        ep.handle_key(event.button)
+                    else:
+                        ep.handle_button(event.button)
+                    continue
+                # Else, normal navigation
+                if event.button == BUTTON_LEFT and state.page_idx > 0:
+                    state.page_idx -= 1
+                    continue
+                if event.button == BUTTON_RIGHT and state.page_idx < len(pages)-1:
+                    state.page_idx += 1
+                    continue
+                active_page = pages[state.page_idx]
+                if (event.button in BUTTONS_DIGITS or event.button == BUTTON_DOT
+                        or event.button in BUTTONS_LETTERS or event.button == BUTTON_BKSP
+                        or event.button == BUTTON_CLR):
+                    active_page.handle_key(event.button)
+                else:
+                    active_page.handle_button(event.button)
+        await asyncio.sleep(0.02)
 
 async def main_loop():
     setup_logging()
-    logging.info("Запуск моста GNS530 → WinWing CDU с переключением страниц")
-
-    bridge = GNS530Bridge()
-
-    # Запускаем слушатель джойстика
-    asyncio.create_task(joystick_listener())
-
+    logging.info("Старт WinWing CDU! (flightplans, scroll, html, цвет, simconnect)")
+    state = AppState()
+    state.bridge = GNS530Bridge()
+    pages = [MainPage(state), FPLNPage(state)]
+    asyncio.create_task(joystick_listener(state, pages))
     async with websockets.connect(WS_URI) as ws:
         while True:
-            data = bridge.read_all()
-            wps  = bridge.get_flightplan()
+            data = state.bridge.read_all()
+            if state.error.is_active():
+                page = ErrorPage(state)
+            else:
+                page = pages[state.page_idx]
             disp = []
-            for text in pages[current_page](data, wps):
-
-                disp.extend(parse_colored_text(text.ljust(24)[:24]))
-
-            
-            # if selected_file:
-            #     disp.append([f"Selected File: {selected_file}"])  # Показываем выбранный файл
+            for text in page.render(data):
+                disp.extend(parse_colored_text(text))
             message = {"Target": "Display", "Data": disp}
             await ws.send(json.dumps(message))
             await asyncio.sleep(UPDATE_INTERVAL)
-
 
 if __name__ == "__main__":
     asyncio.run(main_loop())
