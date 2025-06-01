@@ -1,0 +1,139 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<LittleNavmap xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="https://www.littlenavmap.org/schema/lnmpln.xsd">
+  <Flightplan>
+    <Header>
+      <FlightplanType>IFR</FlightplanType>
+      <CruisingAlt>23000</CruisingAlt>
+      <CruisingAltF>23000.00000000</CruisingAltF>
+      <CreationDate>2025-05-25T19:22:45+03:00</CreationDate>
+      <FileVersion>1.2</FileVersion>
+      <ProgramName>Little Navmap</ProgramName>
+      <ProgramVersion>3.0.12</ProgramVersion>
+      <Documentation>https://www.littlenavmap.org/lnmpln.html</Documentation>
+    </Header>
+    <SimData>MSFS</SimData>
+    <NavData Cycle="2502">NAVIGRAPH</NavData>
+    <AircraftPerformance>
+      <FilePath>Tupolev Tu154M.lnmperf</FilePath>
+      <Type>T154</Type>
+      <Name>Tupolev Tu154M</Name>
+    </AircraftPerformance>
+    <Procedures>
+      <STAR>
+        <Name>RUBE2M</Name>
+        <Runway>33</Runway>
+      </STAR>
+    </Procedures>
+    <Waypoints>
+      <Waypoint>
+        <Name>Novinki</Name>
+        <Ident>UNOY</Ident>
+        <Type>AIRPORT</Type>
+        <Pos Lon="37.657379" Lat="54.978451" Alt="559.00"/>
+      </Waypoint>
+      <Waypoint>
+        <Ident>ENOSI</Ident>
+        <Region>UU</Region>
+        <Type>WAYPOINT</Type>
+        <Pos Lon="37.372776" Lat="54.725555" Alt="7837.09"/>
+      </Waypoint>
+      <Waypoint>
+        <Ident>LODKU</Ident>
+        <Region>UU</Region>
+        <Airway>L736</Airway>
+        <Type>WAYPOINT</Type>
+        <Pos Lon="38.195000" Lat="54.497776" Alt="20585.94"/>
+      </Waypoint>
+      <Waypoint>
+        <Ident>TOGMO</Ident>
+        <Region>UU</Region>
+        <Airway>M56</Airway>
+        <Type>WAYPOINT</Type>
+        <Pos Lon="39.025276" Lat="54.388332" Alt="23000.00"/>
+      </Waypoint>
+      <Waypoint>
+        <Ident>UPLOP</Ident>
+        <Region>UU</Region>
+        <Airway>M56</Airway>
+        <Type>WAYPOINT</Type>
+        <Pos Lon="39.255833" Lat="54.333057" Alt="23000.00"/>
+      </Waypoint>
+      <Waypoint>
+        <Ident>DOSAG</Ident>
+        <Region>UU</Region>
+        <Airway>M56</Airway>
+        <Type>WAYPOINT</Type>
+        <Pos Lon="40.130280" Lat="54.117500" Alt="23000.00"/>
+      </Waypoint>
+      <Waypoint>
+        <Ident>ULKID</Ident>
+        <Region>UU</Region>
+        <Airway>M56</Airway>
+        <Type>WAYPOINT</Type>
+        <Pos Lon="41.038887" Lat="53.957222" Alt="23000.00"/>
+      </Waypoint>
+      <Waypoint>
+        <Ident>DEDUG</Ident>
+        <Region>UU</Region>
+        <Airway>M56</Airway>
+        <Type>WAYPOINT</Type>
+        <Pos Lon="41.752499" Lat="53.838612" Alt="23000.00"/>
+      </Waypoint>
+      <Waypoint>
+        <Ident>ABAGI</Ident>
+        <Region>UW</Region>
+        <Airway>M56</Airway>
+        <Type>WAYPOINT</Type>
+        <Pos Lon="42.676666" Lat="53.676945" Alt="23000.00"/>
+      </Waypoint>
+      <Waypoint>
+        <Ident>IPLEG</Ident>
+        <Region>UW</Region>
+        <Airway>T794</Airway>
+        <Type>WAYPOINT</Type>
+        <Pos Lon="44.427223" Lat="53.752224" Alt="23000.00"/>
+      </Waypoint>
+      <Waypoint>
+        <Ident>TAKIB</Ident>
+        <Region>UW</Region>
+        <Airway>T794</Airway>
+        <Type>WAYPOINT</Type>
+        <Pos Lon="45.205002" Lat="53.765556" Alt="23000.00"/>
+      </Waypoint>
+      <Waypoint>
+        <Ident>NANEP</Ident>
+        <Region>UW</Region>
+        <Airway>T794</Airway>
+        <Type>WAYPOINT</Type>
+        <Pos Lon="46.711666" Lat="53.779446" Alt="23000.00"/>
+      </Waypoint>
+      <Waypoint>
+        <Ident>ULPON</Ident>
+        <Region>UW</Region>
+        <Airway>T794</Airway>
+        <Type>WAYPOINT</Type>
+        <Pos Lon="47.200554" Lat="53.779999" Alt="23000.00"/>
+      </Waypoint>
+      <Waypoint>
+        <Ident>ERELI</Ident>
+        <Region>UW</Region>
+        <Airway>T794</Airway>
+        <Type>WAYPOINT</Type>
+        <Pos Lon="47.895557" Lat="53.827499" Alt="23000.00"/>
+      </Waypoint>
+      <Waypoint>
+        <Ident>RUBEK</Ident>
+        <Region>UW</Region>
+        <Airway>T794</Airway>
+        <Type>WAYPOINT</Type>
+        <Pos Lon="48.865002" Lat="53.766666" Alt="18435.17"/>
+      </Waypoint>
+      <Waypoint>
+        <Name>Kurumoch</Name>
+        <Ident>UWWW</Ident>
+        <Type>AIRPORT</Type>
+        <Pos Lon="50.153625" Lat="53.509827" Alt="477.00"/>
+      </Waypoint>
+    </Waypoints>
+  </Flightplan>
+</LittleNavmap>
